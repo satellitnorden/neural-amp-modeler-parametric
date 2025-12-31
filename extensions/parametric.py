@@ -26,7 +26,28 @@ try:
             if x.dim() == 1:
                 x = x.unsqueeze(-1)
 
-            parameter_values = self._values
+            parameter_values = self._values.clone()
+
+            #TODO: Add some jitter. Try this someday if it makes a difference. (:
+            """
+            if torch.rand(()) < 0.3:
+                sigma = 2e-5
+                T = x.shape[0]
+
+                noise = torch.randn(T, parameter_values.numel(), device=x.device) * sigma
+                drift = noise.cumsum(dim=0)
+
+                # weak attraction to original value (prevents runaway)
+                alpha = 0.001
+                param_traj = parameter_values + drift
+                param_traj = (1 - alpha) * param_traj + alpha * parameter_values
+
+                param_traj.clamp_(0.0, 1.0)
+                parameter_tensor = param_traj
+            else:
+                parameter_tensor = parameter_values.expand(x.shape[0], -1)
+            """
+
             parameter_tensor = parameter_values.expand(x.shape[0], -1)
             self._x = torch.cat([x, parameter_tensor], dim=-1)
 

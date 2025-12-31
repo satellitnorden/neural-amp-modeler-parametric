@@ -1,0 +1,46 @@
+{
+    "type" : "parametric",
+    "train": {
+        "start_seconds": null,
+        "stop_seconds": -9.0,
+        "ny": 8192
+    },
+    "validation": {
+        "start_seconds": -9.0,
+        "stop_seconds": null,
+        "ny": null
+    },
+    "common": {
+        "x_path": "C:\\path\\to\\input\\file.wav",
+        "data" : [
+            {
+                "y_path" : "C:\\path\\to\\output\\file_1.wav",
+                "parameters" : {
+                    "Drive" : 0.0,
+                    "Tone" : 0.0
+                }
+            },
+            {
+                "y_path" : "C:\\path\\to\\output\\file_2.wav",
+                "parameters" : {
+                    "Drive" : 0.0,
+                    "Tone" : 1.0
+                }
+            }
+        ]
+    },
+    "parameters": {
+        "Drive": {
+            "type": "continuous",
+            "default_value": 0.5,
+            "minimum_value": 0.0,
+            "maximum_value": 1.0
+        },
+        "Tone": {
+            "type": "continuous",
+            "default_value": 0.5,
+            "minimum_value": 0.0,
+            "maximum_value": 1.0
+        }
+    }
+}
