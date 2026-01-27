@@ -4,62 +4,70 @@ Registers a "parametric" dataset type that, instead of storing a single 'y_path'
 """
 
 try:
-    from typing import Dict, Union, Tuple
+    import numpy
+    from typing import Dict, Union, Tuple, Optional
     from copy import deepcopy
     from tqdm import tqdm
     import torch
     from nam.data import Dataset, ConcatDataset, register_dataset_initializer
     from nam.models.recurrent import LSTM, _LSTMHiddenCellType
+    from nam.models.wavenet import WaveNet, _WaveNet
     from nam.models.factory import register as RegisterModel
     from nam.train.lightning_module import LightningModule
+    from matplotlib import pyplot as plt
 
     #The parametric dataset.
     class ParametricDataset(Dataset):
-        def __init__(self, parameters: Dict[str, Union[bool, float, int]], *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self._keys = tuple(k for k in parameters.keys())
-            self._values = torch.Tensor([float(parameters[k]) for k in self._keys])
+        def __init__(self, x, number_of_parameters, delay, start_seconds, stop_seconds, sample_rate, parameters: Dict[str, Union[bool, float, int]], *args, **kwargs):
+            total_length = x.shape[0]
 
-            #Fold the parameter values into 'x' directly here, so both training and plotting and such 'just works' later on. (:
-            x = self._x
+            super().__init__(x = x, delay = delay, start_seconds = start_seconds, stop_seconds = stop_seconds, sample_rate = sample_rate, *args, **kwargs)
 
-            if x.dim() == 1:
-                x = x.unsqueeze(-1)
+            if (isinstance(parameters, str)):
+                numpy_parameter_values = numpy.load(parameters);
 
-            parameter_values = self._values.clone()
+                if False:
+                    for _numpy_parameter_values in numpy_parameter_values:
+                        plt.plot(_numpy_parameter_values[0:48000 * 4])
+                        plt.show()
 
-            #TODO: Add some jitter. Try this someday if it makes a difference. (:
-            """
-            if torch.rand(()) < 0.3:
-                sigma = 2e-5
-                T = x.shape[0]
+                params = torch.from_numpy(numpy_parameter_values).float()
 
-                noise = torch.randn(T, parameter_values.numel(), device=x.device) * sigma
-                drift = noise.cumsum(dim=0)
+                # Accept either (L, D) or (D, L)
+                if params.shape[0] != number_of_parameters:
+                    params = params.T
 
-                # weak attraction to original value (prevents runaway)
-                alpha = 0.001
-                param_traj = parameter_values + drift
-                param_traj = (1 - alpha) * param_traj + alpha * parameter_values
+                self._parameters = params  # (D, L)
+            elif isinstance(parameters, dict):
+                keys = tuple(k for k in parameters.keys())
+                self._parameters = torch.Tensor([float(parameters[k]) for k in keys])
+                self._parameters = self._parameters[:, None].expand(-1, total_length)
 
-                param_traj.clamp_(0.0, 1.0)
-                parameter_tensor = param_traj
-            else:
-                parameter_tensor = parameter_values.expand(x.shape[0], -1)
-            """
+            start = int(start_seconds * sample_rate) if start_seconds is not None else 0
+            stop = int(stop_seconds * sample_rate) if stop_seconds is not None else None
 
-            parameter_tensor = parameter_values.expand(x.shape[0], -1)
-            self._x = torch.cat([x, parameter_tensor], dim=-1)
+            #print(f"Applying start: {start} and stop: {stop}")
+
+            self._parameters = self._parameters[:, start:stop]
+
+            if delay > 0:
+                #print(f"Applying delay: {delay}")
+                self._parameters = self._parameters[:, delay:]
+
+            assert self._parameters.shape[1] == self._x.shape[0], "Mismatching shapes!"
 
         @classmethod
         def init_from_config(cls, config):
-            config, data = cls.parse_config(config)
+            config, data, number_of_parameters = cls.parse_config(config)
             datasets = []
             for _data in tqdm(data, desc="Parametric data gather..."):
                 _config = deepcopy(config)
                 y_path, parameters = [_data[k] for k in ("y_path", "parameters")]
                 include = _data.get("include", True)
-                _config.update(y_path=y_path, parameters=parameters)
+                _config.update(y_path=y_path, number_of_parameters=number_of_parameters, parameters=parameters)
+                custom_x_path = _data.get("x_path", None)
+                if custom_x_path is not None:
+                    _config.update(x_path=custom_x_path)
                 _config = super().parse_config(_config)
 
                 if include:
@@ -70,15 +78,26 @@ try:
         @classmethod
         def parse_config(cls, config):
             data = config.pop("data")
-            return config, data
+            number_of_parameters = len(config["parameters"])
+            return config, data, number_of_parameters
+
+        def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            """
+            :return:
+                Parameter values (D,)
+                Input (NX+NY-1,)
+                Output (NY,)
+            """
+            x, y = super().__getitem__(idx)
+            if idx >= len(self):
+                raise IndexError(f"Attempted to access datum {idx}, but len is {len(self)}")
+            i = idx * self._ny
+            j = i + self.y_offset
+            return self._parameters[:, i : i + self._nx + self._ny - 1], x, y
 
         @property
-        def keys(self) -> Tuple[str]:
-            return self._keys
-
-        @property
-        def values(self):
-            return self._values
+        def parameters(self):
+            return self._parameters
         	
     register_dataset_initializer("parametric", ParametricDataset.init_from_config)
 
@@ -111,6 +130,60 @@ try:
             return h, c
 
     RegisterModel("ParametricLSTM", ParametricLSTM.init_from_config)
+
+    #_ParametricWaveNet class - The actual net class.
+    class _ParametricWaveNet(_WaveNet):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+        def forward(self, x, c):
+            y, head_input = x, None
+            for layer in self._layers:
+                head_input, y = layer(y, c, head_input=head_input)
+            head_input = self._head_scale * head_input
+            return head_input if self._head is None else self._head(head_input)
+
+    #Parametric WaveNet class.
+    class ParametricWaveNet(WaveNet):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._net = _ParametricWaveNet(*args, **kwargs)
+
+        def forward(
+            self,
+            params: torch.Tensor,
+            x: torch.Tensor,
+            pad_start: Optional[bool] = None,
+            **kwargs
+        ):
+            pad_start = self.pad_start_default if pad_start is None else pad_start
+            if pad_start:
+                x = torch.cat(
+                    (torch.zeros((len(x), self.receptive_field - 1)).to(x.device), x), dim=1
+                )
+
+            return self._forward(params, x, **kwargs)
+
+        def _forward(self, params, x):
+            """
+            params: (B, D) or (B, D, L)
+            x: (B, L)
+            """
+            if x.ndim == 2:
+                x = x[:, None, :]  # (B, 1, L)
+
+            # Expand static params to time if needed
+            if params.ndim == 2:
+                params = params[..., None].expand(-1, -1, x.shape[2])
+
+            y = self._net(x, params)
+            return y[:, 0, :]
+
+        def _at_nominal_settings(self, x: torch.Tensor) -> torch.Tensor:
+            #TODO: Figure out what to do here? We're getting a 1D tensor, we might want to pad it with default parameters, and run the model, but for now, output unity gain.
+            return x
+
+    RegisterModel("ParametricWaveNet", ParametricWaveNet.init_from_config)
 
     print("'parametric' extension loaded!", flush=True)
 
