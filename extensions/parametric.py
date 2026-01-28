@@ -18,7 +18,7 @@ try:
 
     #The parametric dataset.
     class ParametricDataset(Dataset):
-        def __init__(self, x, number_of_parameters, delay, start_seconds, stop_seconds, sample_rate, parameters: Dict[str, Union[bool, float, int]], *args, **kwargs):
+        def __init__(self, x, number_of_parameters, delay, start_seconds, stop_seconds, sample_rate, jitter, parameters: Dict[str, Union[bool, float, int]], *args, **kwargs):
             total_length = x.shape[0]
 
             super().__init__(x = x, delay = delay, start_seconds = start_seconds, stop_seconds = stop_seconds, sample_rate = sample_rate, *args, **kwargs)
@@ -56,6 +56,8 @@ try:
 
             assert self._parameters.shape[1] == self._x.shape[0], "Mismatching shapes!"
 
+            self._jitter = jitter
+
         @classmethod
         def init_from_config(cls, config):
             config, data, number_of_parameters = cls.parse_config(config)
@@ -63,8 +65,9 @@ try:
             for _data in tqdm(data, desc="Parametric data gather..."):
                 _config = deepcopy(config)
                 y_path, parameters = [_data[k] for k in ("y_path", "parameters")]
+                jitter = _data.get("jitter", None)
                 include = _data.get("include", True)
-                _config.update(y_path=y_path, number_of_parameters=number_of_parameters, parameters=parameters)
+                _config.update(y_path=y_path, jitter=jitter, number_of_parameters=number_of_parameters, parameters=parameters)
                 custom_x_path = _data.get("x_path", None)
                 if custom_x_path is not None:
                     _config.update(x_path=custom_x_path)
@@ -93,7 +96,16 @@ try:
                 raise IndexError(f"Attempted to access datum {idx}, but len is {len(self)}")
             i = idx * self._ny
             j = i + self.y_offset
-            return self._parameters[:, i : i + self._nx + self._ny - 1], x, y
+            parameters = self._parameters[:, i : i + self._nx + self._ny - 1]
+
+            if self._jitter is not None and self._jitter > 0.0:
+                print(f"Applying jitter: {self._jitter}")
+                jitter = ((torch.rand(parameters.shape[0], 1, device=parameters.device) - 0.5) * 2.0) * self._jitter
+                jittered_parameters = torch.clamp(parameters + jitter, 0.0, 1.0)
+                return jittered_parameters, x, y
+
+            else:
+                return parameters, x, y
 
         @property
         def parameters(self):
