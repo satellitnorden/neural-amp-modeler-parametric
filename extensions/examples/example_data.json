@@ -12,6 +12,20 @@
     },
     "common": {
         "x_path": "C:\\path\\to\\input\\file.wav",
+        "parameters": {
+            "Drive": {
+                "type": "continuous",
+                "default_value": 0.5,
+                "minimum_value": 0.0,
+                "maximum_value": 1.0
+            },
+            "Tone": {
+                "type": "continuous",
+                "default_value": 0.5,
+                "minimum_value": 0.0,
+                "maximum_value": 1.0
+            }
+        },
         "data" : [
             {
                 "y_path" : "C:\\path\\to\\output\\file_1.wav",
@@ -26,21 +40,21 @@
                     "Drive" : 0.0,
                     "Tone" : 1.0
                 }
+            },
+            {
+                "y_path" : "C:\\path\\to\\output\\file_3.wav",
+                "parameters" : {
+                    "Drive" : 1.0,
+                    "Tone" : 0.0
+                }
+            },
+            {
+                "y_path" : "C:\\path\\to\\output\\file_4.wav",
+                "parameters" : {
+                    "Drive" : 1.0,
+                    "Tone" : 1.0
+                }
             }
         ]
-    },
-    "parameters": {
-        "Drive": {
-            "type": "continuous",
-            "default_value": 0.5,
-            "minimum_value": 0.0,
-            "maximum_value": 1.0
-        },
-        "Tone": {
-            "type": "continuous",
-            "default_value": 0.5,
-            "minimum_value": 0.0,
-            "maximum_value": 1.0
-        }
     }
 }
