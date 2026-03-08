@@ -5,18 +5,18 @@
 #include <string>
 #include <vector>
 
-#include "Eigen/Dense"
+#include "../Eigen/Dense"
 
-#include "activations.h"
-#include "conv1d.h"
-#include "dsp.h"
-#include "gating_activations.h"
-#include "film.h"
-#include "json.hpp"
+#include "../activations.h"
+#include "../conv1d.h"
+#include "../dsp.h"
+#include "../gating_activations.h"
+#include "../film.h"
+#include "../json.hpp"
 
 namespace nam
 {
-namespace wavenet
+namespace parametric_wavenet
 {
 
 // Gating mode for WaveNet layers
@@ -71,7 +71,8 @@ public:
          const _FiLMParams& gating_activation_post_film_params, const _FiLMParams& _1x1_post_film_params,
          const _FiLMParams& head1x1_post_film_params)
   : _conv(channels, (gating_mode != GatingMode::NONE) ? 2 * bottleneck : bottleneck, kernel_size, true, dilation)
-  , _input_mixin(condition_size, (gating_mode != GatingMode::NONE) ? 2 * bottleneck : bottleneck, false)
+  , _film_gamma(condition_size, (gating_mode != GatingMode::NONE) ? 2 * bottleneck : bottleneck, true)
+  , _film_beta(condition_size, (gating_mode != GatingMode::NONE) ? 2 * bottleneck : bottleneck, true)
   , _1x1(bottleneck, channels, groups_1x1)
   , _activation(activations::Activation::get_activation(activation_config))
   , _gating_mode(gating_mode)
@@ -183,8 +184,9 @@ public:
 private:
   // The dilated convolution at the front of the block
   Conv1D _conv;
-  // Input mixin
-  Conv1x1 _input_mixin;
+
+  Conv1x1 _film_gamma;
+  Conv1x1 _film_beta;
   // The post-activation 1x1 convolution
   Conv1x1 _1x1;
   // The post-activation 1x1 convolution outputting to the head, optional

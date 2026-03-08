@@ -5,13 +5,13 @@ Registers a "parametric" dataset type that, instead of storing a single 'y_path'
 
 try:
     import numpy
-    from typing import Dict, Union, Tuple, Optional
+    from typing import Dict, Union, Tuple, Optional, Sequence
     from copy import deepcopy
     from tqdm import tqdm
     import torch
     from nam.data import Dataset, ConcatDataset, register_dataset_initializer
     from nam.models.recurrent import LSTM, _LSTMHiddenCellType
-    from nam.models.wavenet import WaveNet, _WaveNet
+    from nam.models.wavenet import WaveNet, _WaveNet, _Layers, _Layer, Conv1d
     from nam.models.factory import register as RegisterModel
     from nam.train.lightning_module import LightningModule
     from matplotlib import pyplot as plt
@@ -51,8 +51,9 @@ try:
             self._parameters = self._parameters[:, start:stop]
 
             if delay > 0:
-                #print(f"Applying delay: {delay}")
                 self._parameters = self._parameters[:, delay:]
+            elif delay < 0:
+                self._parameters = self._parameters[:, :delay]
 
             assert self._parameters.shape[1] == self._x.shape[0], "Mismatching shapes!"
 
@@ -99,7 +100,6 @@ try:
             parameters = self._parameters[:, i : i + self._nx + self._ny - 1]
 
             if self._jitter is not None and self._jitter > 0.0:
-                print(f"Applying jitter: {self._jitter}")
                 jitter = ((torch.rand(parameters.shape[0], 1, device=parameters.device) - 0.5) * 2.0) * self._jitter
                 jittered_parameters = torch.clamp(parameters + jitter, 0.0, 1.0)
                 return jittered_parameters, x, y
@@ -112,6 +112,9 @@ try:
             return self._parameters
         	
     register_dataset_initializer("parametric", ParametricDataset.init_from_config)
+
+    '''
+    NOTE - The parametric LSTM class hasn't been used for a while and I don't know if it works anymore. Putting all work into the parametric WaveNet for now, so this is disabled for now. (:
 
     #Parametric LSTM class.
     class ParametricLSTM(LSTM):
@@ -142,11 +145,109 @@ try:
             return h, c
 
     RegisterModel("ParametricLSTM", ParametricLSTM.init_from_config)
+    '''
+
+    ###########
+    # WAVENET #
+    ###########
+
+    #_ParametricLayer class - contains a single WaveNet layer.
+    class _ParametricLayer(_Layer):
+        def __init__(
+            self,
+            condition_size: int,
+            channels: int,
+            kernel_size: int,
+            dilation: int,
+            activation: str,
+            gated: bool,
+        ):
+            super().__init__(condition_size, channels, kernel_size, dilation, activation, gated)
+
+            mid_channels = 2 * channels if gated else channels
+
+            self._film_gamma = Conv1d(condition_size, mid_channels, 1, bias=True)
+            self._film_beta = Conv1d(condition_size, mid_channels, 1, bias=True)
+            torch.nn.init.zeros_(self._film_gamma.weight)
+            torch.nn.init.ones_(self._film_gamma.bias)
+            torch.nn.init.zeros_(self._film_beta.weight)
+            torch.nn.init.zeros_(self._film_beta.bias)
+
+        def export_weights(self) -> torch.Tensor:
+            return torch.cat(
+                [
+                    self.conv.export_weights(),
+                    self._film_gamma.export_weights(),
+                    self._film_beta.export_weights(),
+                    self._1x1.export_weights(),
+                ]
+            )
+
+        def import_weights(self, weights: torch.Tensor, i: int) -> int:
+            i = self.conv.import_weights(weights, i)
+            i = self._film_gamma.import_weights(weights, i)
+            i = self._film_beta.import_weights(weights, i)
+            return self._1x1.import_weights(weights, i)
+
+        def forward(
+            self, x: torch.Tensor, h: Optional[torch.Tensor], out_length: int
+        ) -> Tuple[Optional[torch.Tensor], torch.Tensor]:
+            """
+            :param x: (B,C,L1) From last layer
+            :param h: (B,DX,L2) Conditioning. If first, ignored.
+
+            :return:
+                If not final:
+                    (B,C,L1-d) to next layer
+                    (B,C,L1-d) to mixer
+                If final, next layer is None
+            """
+            zconv = self.conv(x)
+            film_gamma = self._film_gamma(h)[:, :, -zconv.shape[2]:]
+            film_beta = self._film_beta(h)[:, :, -zconv.shape[2]:]
+            z1 = film_gamma * zconv + film_beta
+            post_activation = (
+                self._activation(z1)
+                if not self._gated
+                else (
+                    self._activation(z1[:, : self._channels])
+                    * torch.sigmoid(z1[:, self._channels :])
+                )
+            )
+            return (
+                x[:, :, -post_activation.shape[2] :] + self._1x1(post_activation),
+                post_activation[:, :, -out_length:],
+            )
+
+    #_ParametricLayers class - contains each WaveNet layer array.
+    class _ParametricLayers(_Layers):
+        def __init__(
+            self,
+            input_size: int,
+            condition_size: int,
+            head_size,
+            channels: int,
+            kernel_size: int,
+            dilations: Sequence[int],
+            activation: str = "Tanh",
+            gated: bool = True,
+            head_bias: bool = True,
+        ):
+            super().__init__(input_size, condition_size, head_size, channels, kernel_size, dilations, activation, gated, head_bias)
+            self._layers = torch.nn.ModuleList(
+                [
+                    _ParametricLayer(
+                        condition_size, channels, kernel_size, dilation, activation, gated
+                    )
+                    for dilation in dilations
+                ]
+            )
 
     #_ParametricWaveNet class - The actual net class.
     class _ParametricWaveNet(_WaveNet):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
+        def __init__(self, layers_configs: Sequence[Dict], *args, **kwargs):
+            super().__init__(layers_configs, *args, **kwargs)
+            self._layers = torch.nn.ModuleList([_ParametricLayers(**lc) for lc in layers_configs])
 
         def forward(self, x, c):
             y, head_input = x, None

@@ -1,4 +1,4 @@
-# NOTE: THIS IS WORK IN PROGRESS, MANY THINGS ARE UNSUPPORTED OR MAY NOT WORK AS INTENDED.
+# NOTE: THIS IS WORK IN PROGRESS, SOME THINGS MAY BE UNSUPPORTED OR MAY NOT WORK AS INTENDED.
 # IT IS ALSO VERY EXPERIMENTAL, I'M STILL LEARNING HOW TO MAKE THIS WORK PROPERLY. (:
 
 This repository contains an extension for training parametric models (models that, in addition to input audio data, can take a set of parameter values, emulating knobs on the analog gear).
@@ -7,7 +7,7 @@ The setup is fairly simple;
 First, your data.json file needs a couple of modifications.
 You need to put ```"type" : "parametric"``` in your file to denote that this is a parametric dataset.
 Next, instead of having a single ```"y_path"```, this is instead put into a ```"data"``` array where each entry contains the ```"y_path"``` for that capture, as well as the parameter values used during that capture.
-The assumption here is that the analog device is captured multiple times with the knobs at different positions.
+The assumption here is that the analog device is captured multiple times with the knobs/switches at different positions.
 All of this data is then fed into the model during training.
 You can see an example data file at ```extensions/examples/example_data.json```
 
@@ -18,7 +18,9 @@ You can see an example model file at ```extensions/examples/example_model_wavene
 
 The learning.json file you can use exactly as before. (:
 
-In the ```runtime``` folder I've added the modified ```wavenet.h/cpp``` files I'm using to load and process the trained models at runtime - It _should_ work out of the box, but beware that I haven't yet tested this really on other systems than mine. At some point in the future I would like to make a plugin that can load parametric models and automatically add controls for the different parameters, but this might be a lot of time in the future, but this repository handles the hard part - Training the models.
+In the ```runtime``` folder I've added the ```parametric_wavenet.h/cpp``` files I'm using to load and process the trained models at runtime - It _should_ work out of the box, but beware that I haven't yet tested this really on other systems than mine. At some point in the future I would like to make a plugin that can load parametric models and automatically add controls for the different parameters, but this might be a lot of time in the future, but this repository handles the hard part - Training the models.
+
+When A2 drops, I'll work on setting up parametric versions of these. (:
 
 # NAM: Neural Amp Modeler
 
